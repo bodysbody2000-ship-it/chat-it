@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Send, Image as ImageIcon, Smile, KeyRound, LogOut, Loader2, ShieldCheck } from "lucide-react";
 import { format } from "date-fns";
+import { playSend, playReceive } from "../lib/sounds";
 
 const COMMON_EMOJIS = [
   "😀","😂","🤣","😊","😍","🥰","😎","🤩","😘","😗",
@@ -90,6 +91,11 @@ export default function Chat() {
               return next;
             });
           }, 400);
+
+          // Play receive sound only for messages from others
+          const currentUser = localStorage.getItem("chat_username") ?? "";
+          const fromOthers = incoming.some((m) => m.username !== currentUser);
+          if (fromOthers) playReceive();
         }
 
         return data;
@@ -185,10 +191,12 @@ export default function Chat() {
 
     // Rocket the button
     setSendAnimating(false);
-    // Force reflow so animation restarts even if clicked fast
     void sendBtnRef.current?.offsetWidth;
     setSendAnimating(true);
     setTimeout(() => setSendAnimating(false), 320);
+
+    // Whoosh sound
+    playSend();
   };
 
   const handleSendMessage = (e?: React.FormEvent) => {
