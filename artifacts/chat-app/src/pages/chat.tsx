@@ -29,9 +29,20 @@ export default function Chat() {
   const [isLoading, setIsLoading] = useState(true);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
 
+  // IDs of messages that should play the pop-in animation
+  const [newMsgIds, setNewMsgIds] = useState<Set<number>>(new Set());
+  // IDs known on first load — don't animate these
+  const seenOnLoad = useRef<Set<number>>(new Set());
+  const isFirstLoad = useRef(true);
+
+  // Send button rocket animation state
+  const [sendAnimating, setSendAnimating] = useState(false);
+  // Input flash state
+  const [inputFlash, setInputFlash] = useState(false);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sendBtnRef = useRef<HTMLButtonElement>(null);
 
   const sendMessageMutation = useSendMessage();
 
@@ -51,7 +62,39 @@ export default function Chat() {
         return;
       }
       const data: Message[] = await res.json();
-      setMessages(data);
+
+      setMessages((prev) => {
+        // On first load, mark all current IDs as "old" — no animation
+        if (isFirstLoad.current) {
+          isFirstLoad.current = false;
+          data.forEach((m) => seenOnLoad.current.add(m.id));
+          return data;
+        }
+
+        // Find truly new messages
+        const prevIds = new Set(prev.map((m) => m.id));
+        const incoming = data.filter((m) => !prevIds.has(m.id) && !seenOnLoad.current.has(m.id));
+
+        if (incoming.length > 0) {
+          const incomingIds = new Set(incoming.map((m) => m.id));
+          setNewMsgIds((old) => {
+            const next = new Set(old);
+            incoming.forEach((m) => next.add(m.id));
+            return next;
+          });
+          // Remove animation class after it plays (220ms)
+          setTimeout(() => {
+            setNewMsgIds((old) => {
+              const next = new Set(old);
+              incomingIds.forEach((id) => next.delete(id));
+              return next;
+            });
+          }, 400);
+        }
+
+        return data;
+      });
+
       setIsConnected(true);
     } catch {
       setIsConnected(false);
@@ -60,7 +103,7 @@ export default function Chat() {
     }
   }, [setLocation]);
 
-  // ===== جلب من يكتب الآن =====
+  // ===== جلب من يكتب =====
   const fetchTyping = useCallback(async () => {
     const token = localStorage.getItem("chat_token");
     if (!token) return;
@@ -72,9 +115,7 @@ export default function Chat() {
       const data: { typing: string[] } = await res.json();
       const currentUsername = localStorage.getItem("chat_username") ?? "";
       setTypingUsers(data.typing.filter((u) => u !== currentUsername));
-    } catch {
-      /* silent */
-    }
+    } catch { /* silent */ }
   }, []);
 
   // ===== إرسال إشارة الكتابة =====
@@ -91,18 +132,13 @@ export default function Chat() {
         },
         body: JSON.stringify({ username: uname }),
       });
-    } catch {
-      /* silent */
-    }
+    } catch { /* silent */ }
   }, []);
 
-  // ===== التحقق من الدخول وتحميل الاسم =====
+  // ===== Auth check =====
   useEffect(() => {
     const token = localStorage.getItem("chat_token");
-    if (!token) {
-      setLocation("/");
-      return;
-    }
+    if (!token) { setLocation("/"); return; }
     const storedUsername = localStorage.getItem("chat_username");
     if (!storedUsername) {
       setShowUsernamePrompt(true);
@@ -111,26 +147,20 @@ export default function Chat() {
     }
   }, [setLocation]);
 
-  // ===== Polling: رسائل كل 3 ثواني + typing كل 2 ثانية =====
+  // ===== Polling =====
   useEffect(() => {
     if (!username) return;
-
     fetchMessages();
     fetchTyping();
-
-    const messagesInterval = setInterval(fetchMessages, 3000);
-    const typingInterval = setInterval(fetchTyping, 2000);
-
-    return () => {
-      clearInterval(messagesInterval);
-      clearInterval(typingInterval);
-    };
+    const mInt = setInterval(fetchMessages, 3000);
+    const tInt = setInterval(fetchTyping, 2000);
+    return () => { clearInterval(mInt); clearInterval(tInt); };
   }, [username, fetchMessages, fetchTyping]);
 
-  // ===== Auto-scroll =====
+  // ===== Auto-scroll on new messages =====
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
     }
   }, [messages.length]);
 
@@ -145,33 +175,58 @@ export default function Chat() {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInputValue(e.target.value);
-
-    // إرسال إشارة typing
     sendTypingSignal();
+  };
 
-    // إيقاف إشارة typing تلقائياً بعد 3 ثواني من التوقف عن الكتابة
-    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+  const triggerSendAnimation = () => {
+    // Flash the input
+    setInputFlash(true);
+    setTimeout(() => setInputFlash(false), 400);
+
+    // Rocket the button
+    setSendAnimating(false);
+    // Force reflow so animation restarts even if clicked fast
+    void sendBtnRef.current?.offsetWidth;
+    setSendAnimating(true);
+    setTimeout(() => setSendAnimating(false), 320);
   };
 
   const handleSendMessage = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!inputValue.trim() || sendMessageMutation.isPending) return;
 
-    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    const textToSend = inputValue.trim();
+    setInputValue(""); // instant clear — feels snappy
+    triggerSendAnimation();
+
+    // Optimistic: add message locally before server responds
+    const optimisticId = -Date.now();
+    const optimisticMsg: Message = {
+      id: optimisticId,
+      content: textToSend,
+      type: "text",
+      username,
+      imageUrl: null,
+      createdAt: new Date().toISOString(),
+    };
+    seenOnLoad.current.add(optimisticId); // don't re-animate from server
+    setMessages((prev) => [...prev, optimisticMsg]);
+    // Animate the optimistic bubble (it IS new — our own send)
+    setNewMsgIds((old) => { const next = new Set(old); next.add(optimisticId); return next; });
+    setTimeout(() => setNewMsgIds((old) => { const next = new Set(old); next.delete(optimisticId); return next; }), 400);
 
     sendMessageMutation.mutate(
-      { data: { content: inputValue.trim(), type: "text", username } },
+      { data: { content: textToSend, type: "text", username } },
       {
-        onSuccess: (newMsg) => {
-          setInputValue("");
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === newMsg.id)) return prev;
-            return [...prev, newMsg];
-          });
-          setTimeout(() => {
-            if (scrollRef.current)
-              scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-          }, 50);
+        onSuccess: (realMsg) => {
+          seenOnLoad.current.add(realMsg.id);
+          setMessages((prev) =>
+            prev.map((m) => (m.id === optimisticId ? realMsg : m))
+          );
+        },
+        onError: () => {
+          // Remove optimistic message on error
+          setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
         },
       }
     );
@@ -191,15 +246,13 @@ export default function Chat() {
       });
       if (res.ok) {
         const data = await res.json();
+        triggerSendAnimation();
         sendMessageMutation.mutate({
           data: { content: "صورة", type: "image", username, imageUrl: data.url },
         });
       }
-    } catch {
-      /* silent */
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
+    } catch { /* silent */ }
+    finally { if (fileInputRef.current) fileInputRef.current.value = ""; }
   };
 
   const handleLogout = () => {
@@ -221,97 +274,57 @@ export default function Chat() {
               value={tempUsername}
               onChange={(e) => setTempUsername(e.target.value)}
               placeholder="مثال: أحمد"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleSaveUsername();
-              }}
+              onKeyDown={(e) => { if (e.key === "Enter") handleSaveUsername(); }}
             />
-            <Button onClick={handleSaveUsername} disabled={!tempUsername.trim()}>
-              تأكيد
-            </Button>
+            <Button onClick={handleSaveUsername} disabled={!tempUsername.trim()}>تأكيد</Button>
           </div>
         </DialogContent>
       </Dialog>
     );
   }
 
-  // نص typing indicator
   const typingText =
-    typingUsers.length === 0
-      ? null
-      : typingUsers.length === 1
-      ? `${typingUsers[0]} يكتب...`
-      : typingUsers.length === 2
-      ? `${typingUsers[0]} و ${typingUsers[1]} يكتبان...`
-      : `${typingUsers.slice(0, 2).join(" و ")} وآخرون يكتبون...`;
+    typingUsers.length === 0 ? null
+    : typingUsers.length === 1 ? `${typingUsers[0]} يكتب...`
+    : typingUsers.length === 2 ? `${typingUsers[0]} و ${typingUsers[1]} يكتبان...`
+    : `${typingUsers.slice(0, 2).join(" و ")} وآخرون يكتبون...`;
 
   return (
-    <div
-      style={{ height: "100dvh" }}
-      className="flex flex-col bg-background text-foreground overflow-hidden"
-    >
-      {/* Header */}
+    <div style={{ height: "100dvh" }} className="flex flex-col bg-background text-foreground overflow-hidden">
+
+      {/* ── Header ── */}
       <header className="flex items-center justify-between px-3 py-2.5 border-b border-border/50 bg-card/50 backdrop-blur-sm shrink-0 gap-2">
-        {/* Left: title + encrypted badge + status */}
         <div className="flex items-center gap-2 min-w-0">
           <h1 className="text-base font-bold text-primary shrink-0">Chat</h1>
-
           <div className="flex items-center gap-1 bg-primary/10 border border-primary/20 rounded-full px-2 py-0.5 shrink-0">
             <ShieldCheck className="w-3 h-3 text-primary" />
-            <span className="text-[10px] text-primary font-medium whitespace-nowrap">
-              Totally Encrypted
-            </span>
+            <span className="text-[10px] text-primary font-medium whitespace-nowrap">Totally Encrypted</span>
           </div>
-
           <div className="flex items-center gap-1 shrink-0">
             <span className="relative flex h-2 w-2">
-              {isConnected && (
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
-              )}
-              <span
-                className={`relative inline-flex rounded-full h-2 w-2 ${
-                  isConnected ? "bg-primary" : "bg-muted-foreground"
-                }`}
-              />
+              {isConnected && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />}
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${isConnected ? "bg-primary" : "bg-muted-foreground"}`} />
             </span>
-            <span
-              className={`text-[10px] hidden sm:inline ${
-                isConnected ? "text-primary" : "text-muted-foreground"
-              }`}
-            >
+            <span className={`text-[10px] hidden sm:inline ${isConnected ? "text-primary" : "text-muted-foreground"}`}>
               {isConnected ? "متصل" : "غير متصل"}
             </span>
           </div>
         </div>
-
-        {/* Right: API Keys + username + logout */}
         <div className="flex items-center gap-1.5 shrink-0">
-          <Link
-            href="/apikeys"
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors px-2 py-1 rounded-md hover:bg-secondary/50"
-          >
+          <Link href="/apikeys" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors px-2 py-1 rounded-md hover:bg-secondary/50">
             <KeyRound className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">API Keys</span>
           </Link>
           <div className="h-3.5 w-px bg-border" />
-          <span className="text-xs font-medium text-primary/70 max-w-[60px] truncate">
-            {username}
-          </span>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleLogout}
-            className="h-7 w-7 text-muted-foreground hover:text-destructive"
-          >
+          <span className="text-xs font-medium text-primary/70 max-w-[60px] truncate">{username}</span>
+          <Button variant="ghost" size="icon" onClick={handleLogout} className="h-7 w-7 text-muted-foreground hover:text-destructive">
             <LogOut className="w-3.5 h-3.5" />
           </Button>
         </div>
       </header>
 
-      {/* Messages */}
-      <div
-        ref={scrollRef}
-        className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 space-y-3"
-      >
+      {/* ── Messages ── */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 space-y-3">
         {isLoading ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="w-7 h-7 text-primary animate-spin" />
@@ -327,49 +340,34 @@ export default function Chat() {
             const showHeader =
               i === 0 ||
               prev.username !== msg.username ||
-              new Date(msg.createdAt).getTime() -
-                new Date(prev.createdAt).getTime() >
-                60000;
+              new Date(msg.createdAt).getTime() - new Date(prev.createdAt).getTime() > 60000;
+
+            const isNew = newMsgIds.has(msg.id);
+            const animClass = isNew ? (isMe ? "msg-new-right" : "msg-new-left") : "";
 
             return (
-              <div
-                key={msg.id}
-                className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}
-              >
+              <div key={msg.id} className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}>
                 {showHeader && (
-                  <div
-                    className={`flex items-baseline gap-1.5 mb-1 ${
-                      isMe ? "flex-row-reverse" : "flex-row"
-                    }`}
-                  >
-                    <span className="text-xs font-semibold text-primary/80">
-                      {msg.username}
-                    </span>
-                    <span className="text-[10px] text-muted-foreground">
-                      {format(new Date(msg.createdAt), "HH:mm")}
-                    </span>
+                  <div className={`flex items-baseline gap-1.5 mb-1 ${isMe ? "flex-row-reverse" : "flex-row"}`}>
+                    <span className="text-xs font-semibold text-primary/80">{msg.username}</span>
+                    <span className="text-[10px] text-muted-foreground">{format(new Date(msg.createdAt), "HH:mm")}</span>
                   </div>
                 )}
                 <div
-                  className={`px-3 py-2 rounded-2xl break-words ${
+                  className={`px-3 py-2 rounded-2xl break-words ${animClass} ${
                     isMe
                       ? "bg-primary text-primary-foreground rounded-tr-sm"
                       : "bg-secondary text-secondary-foreground rounded-tl-sm border border-border"
                   }`}
-                  style={{ maxWidth: "min(75vw, 340px)" }}
+                  style={{
+                    maxWidth: "min(75vw, 340px)",
+                    willChange: isNew ? "transform, opacity" : "auto",
+                  }}
                 >
                   {msg.type === "image" && msg.imageUrl ? (
-                    <img
-                      src={msg.imageUrl}
-                      alt="صورة"
-                      className="max-w-full rounded-lg object-cover"
-                      style={{ maxWidth: 260 }}
-                      loading="lazy"
-                    />
+                    <img src={msg.imageUrl} alt="صورة" className="max-w-full rounded-lg object-cover" style={{ maxWidth: 260 }} loading="lazy" />
                   ) : (
-                    <p className="leading-relaxed whitespace-pre-wrap text-sm">
-                      {msg.content}
-                    </p>
+                    <p className="leading-relaxed whitespace-pre-wrap text-sm">{msg.content}</p>
                   )}
                 </div>
               </div>
@@ -378,8 +376,9 @@ export default function Chat() {
         )}
       </div>
 
-      {/* Input area */}
+      {/* ── Input area ── */}
       <div className="bg-card/80 backdrop-blur-md border-t border-border shrink-0">
+
         {/* Typing indicator */}
         <div className="px-4 pt-2 h-5 flex items-center">
           {typingText && (
@@ -394,34 +393,18 @@ export default function Chat() {
           )}
         </div>
 
-        <form
-          onSubmit={handleSendMessage}
-          className="flex items-center gap-2 px-3 py-2"
-        >
+        <form onSubmit={handleSendMessage} className="flex items-center gap-2 px-3 py-2">
+          {/* Emoji */}
           <Popover>
             <PopoverTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="shrink-0 h-9 w-9 rounded-full hover:bg-secondary text-muted-foreground"
-              >
+              <Button type="button" variant="ghost" size="icon" className="shrink-0 h-9 w-9 rounded-full hover:bg-secondary text-muted-foreground">
                 <Smile className="w-5 h-5" />
               </Button>
             </PopoverTrigger>
-            <PopoverContent
-              side="top"
-              align="start"
-              className="w-56 p-2 bg-popover/95 backdrop-blur-xl border-border"
-            >
+            <PopoverContent side="top" align="start" className="w-56 p-2 bg-popover/95 backdrop-blur-xl border-border">
               <div className="grid grid-cols-5 gap-1">
                 {COMMON_EMOJIS.map((emoji) => (
-                  <button
-                    key={emoji}
-                    type="button"
-                    className="p-1.5 text-lg hover:bg-secondary rounded-md transition-colors"
-                    onClick={() => setInputValue((prev) => prev + emoji)}
-                  >
+                  <button key={emoji} type="button" className="p-1.5 text-lg hover:bg-secondary rounded-md transition-colors" onClick={() => setInputValue((prev) => prev + emoji)}>
                     {emoji}
                   </button>
                 ))}
@@ -429,53 +412,39 @@ export default function Chat() {
             </PopoverContent>
           </Popover>
 
-          <input
-            type="file"
-            ref={fileInputRef}
-            className="hidden"
-            accept="image/*"
-            onChange={handleFileChange}
-          />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="shrink-0 h-9 w-9 rounded-full hover:bg-secondary text-muted-foreground"
-            onClick={() => fileInputRef.current?.click()}
-          >
+          {/* Image upload */}
+          <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
+          <Button type="button" variant="ghost" size="icon" className="shrink-0 h-9 w-9 rounded-full hover:bg-secondary text-muted-foreground" onClick={() => fileInputRef.current?.click()}>
             <ImageIcon className="w-5 h-5" />
           </Button>
 
+          {/* Text input */}
           <Input
             value={inputValue}
             onChange={handleInputChange}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSendMessage();
-              }
+              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendMessage(); }
             }}
             placeholder="اكتب رسالة..."
-            className="flex-1 h-9 rounded-full bg-secondary/50 border-secondary focus-visible:ring-primary px-4 text-sm"
+            className={`flex-1 h-9 rounded-full bg-secondary/50 border-secondary focus-visible:ring-primary px-4 text-sm transition-shadow ${inputFlash ? "input-sent-flash" : ""}`}
           />
 
+          {/* Send button — rocket animation */}
           <Button
+            ref={sendBtnRef}
             type="submit"
             size="icon"
-            className="shrink-0 h-9 w-9 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground transition-all active:scale-95"
+            className={`shrink-0 h-9 w-9 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground transition-colors ${sendAnimating ? "btn-rocket-animate" : ""}`}
+            style={{ willChange: sendAnimating ? "transform" : "auto" }}
             disabled={!inputValue.trim() || sendMessageMutation.isPending}
           >
-            {sendMessageMutation.isPending ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Send className="w-4 h-4" />
-            )}
+            <Send className="w-4 h-4" />
           </Button>
         </form>
 
         {/* Footer */}
         <p className="text-center text-[10px] text-muted-foreground/50 pb-2 px-2">
-          Made by Abdelwahab &nbsp;•&nbsp; Copyrights Reserved
+          Made by Abdelwahab&nbsp;•&nbsp;Copyrights Reserved
         </p>
       </div>
     </div>
