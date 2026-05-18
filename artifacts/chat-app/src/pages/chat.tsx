@@ -6,30 +6,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Send, Image as ImageIcon, Smile, KeyRound, LogOut, Loader2 } from "lucide-react";
+import { Send, Image as ImageIcon, Smile, KeyRound, LogOut, Loader2, ShieldCheck } from "lucide-react";
 import { format } from "date-fns";
 
 const COMMON_EMOJIS = [
-  "😀", "😂", "🤣", "😊", "😍", "🥰", "😎", "🤩", "😘", "😗",
-  "😋", "😛", "😜", "🤪", "😝", "🤑", "🤗", "🤭", "🤫", "🤔",
-  "🤐", "🤨", "😐", "😑", "😶", "😏", "😒", "🙄", "😬", "🤥",
-  "😌", "😔", "😪", "🤤", "😴", "😷", "🤒", "🤕", "🤢", "🤮",
-  "🤧", "🥵", "🥶", "🥴", "😵", "🤯", "🤠", "🥳", "❤️", "👍"
+  "😀","😂","🤣","😊","😍","🥰","😎","🤩","😘","😗",
+  "😋","😛","😜","🤪","😝","🤑","🤗","🤭","🤫","🤔",
+  "🤐","🤨","😐","😑","😶","😏","😒","🙄","😬","🤥",
+  "😌","😔","😪","🤤","😴","😷","🤒","🤕","🤢","🤮",
+  "🤧","🥵","🥶","🥴","😵","🤯","🤠","🥳","❤️","👍",
 ];
-
-/*
- * ===== كيف يعمل الـ Polling (التحديث التلقائي) =====
- *
- * بدل WebSocket (مش بيشتغل على Vercel)، بنستخدم Polling:
- *
- * كل 3 ثواني:
- *   المتصفح بيبعت GET /api/messages لجلب أحدث الرسائل
- *   لو في رسائل جديدة، بيحدث الـ State تلقائياً
- *   المستخدم ما يحسش بأي ريفريش كامل للصفحة
- *
- * useEffect + setInterval = منبه بيشتغل في الخلفية
- * clearInterval = بنوقف المنبه لما المستخدم يخرج من الصفحة
- */
 
 export default function Chat() {
   const [, setLocation] = useLocation();
@@ -41,17 +27,18 @@ export default function Chat() {
   const [inputValue, setInputValue] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const sendMessageMutation = useSendMessage();
 
-  // ===== جلب الرسائل من السيرفر =====
+  // ===== جلب الرسائل =====
   const fetchMessages = useCallback(async () => {
     const token = localStorage.getItem("chat_token");
     if (!token) return;
-
     try {
       const res = await fetch("/api/messages?limit=50", {
         headers: { Authorization: `Bearer ${token}` },
@@ -73,7 +60,43 @@ export default function Chat() {
     }
   }, [setLocation]);
 
-  // ===== التحقق من الدخول =====
+  // ===== جلب من يكتب الآن =====
+  const fetchTyping = useCallback(async () => {
+    const token = localStorage.getItem("chat_token");
+    if (!token) return;
+    try {
+      const res = await fetch("/api/typing", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data: { typing: string[] } = await res.json();
+      const currentUsername = localStorage.getItem("chat_username") ?? "";
+      setTypingUsers(data.typing.filter((u) => u !== currentUsername));
+    } catch {
+      /* silent */
+    }
+  }, []);
+
+  // ===== إرسال إشارة الكتابة =====
+  const sendTypingSignal = useCallback(async () => {
+    const token = localStorage.getItem("chat_token");
+    const uname = localStorage.getItem("chat_username");
+    if (!token || !uname) return;
+    try {
+      await fetch("/api/typing", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ username: uname }),
+      });
+    } catch {
+      /* silent */
+    }
+  }, []);
+
+  // ===== التحقق من الدخول وتحميل الاسم =====
   useEffect(() => {
     const token = localStorage.getItem("chat_token");
     if (!token) {
@@ -88,23 +111,23 @@ export default function Chat() {
     }
   }, [setLocation]);
 
-  // ===== Polling: جلب الرسائل كل 3 ثواني =====
+  // ===== Polling: رسائل كل 3 ثواني + typing كل 2 ثانية =====
   useEffect(() => {
     if (!username) return;
 
-    // جلب فوري أول ما ندخل
     fetchMessages();
+    fetchTyping();
 
-    // منبه بيشتغل كل 3000 ميللي ثانية (3 ثواني)
-    const interval = setInterval(() => {
-      fetchMessages();
-    }, 3000);
+    const messagesInterval = setInterval(fetchMessages, 3000);
+    const typingInterval = setInterval(fetchTyping, 2000);
 
-    // تنظيف: بنوقف المنبه لما المستخدم يخرج من الصفحة
-    return () => clearInterval(interval);
-  }, [username, fetchMessages]);
+    return () => {
+      clearInterval(messagesInterval);
+      clearInterval(typingInterval);
+    };
+  }, [username, fetchMessages, fetchTyping]);
 
-  // ===== auto-scroll لآخر رسالة =====
+  // ===== Auto-scroll =====
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -113,15 +136,28 @@ export default function Chat() {
 
   const handleSaveUsername = () => {
     if (tempUsername.trim().length > 0) {
-      localStorage.setItem("chat_username", tempUsername.trim());
-      setUsername(tempUsername.trim());
+      const name = tempUsername.trim();
+      localStorage.setItem("chat_username", name);
+      setUsername(name);
       setShowUsernamePrompt(false);
     }
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInputValue(e.target.value);
+
+    // إرسال إشارة typing
+    sendTypingSignal();
+
+    // إيقاف إشارة typing تلقائياً بعد 3 ثواني من التوقف عن الكتابة
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
   };
 
   const handleSendMessage = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!inputValue.trim() || sendMessageMutation.isPending) return;
+
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
 
     sendMessageMutation.mutate(
       { data: { content: inputValue.trim(), type: "text", username } },
@@ -133,9 +169,8 @@ export default function Chat() {
             return [...prev, newMsg];
           });
           setTimeout(() => {
-            if (scrollRef.current) {
+            if (scrollRef.current)
               scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-            }
           }, 50);
         },
       }
@@ -145,11 +180,9 @@ export default function Chat() {
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     const token = localStorage.getItem("chat_token");
     const formData = new FormData();
     formData.append("file", file);
-
     try {
       const res = await fetch("/api/upload", {
         method: "POST",
@@ -188,7 +221,9 @@ export default function Chat() {
               value={tempUsername}
               onChange={(e) => setTempUsername(e.target.value)}
               placeholder="مثال: أحمد"
-              onKeyDown={(e) => { if (e.key === "Enter") handleSaveUsername(); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSaveUsername();
+              }}
             />
             <Button onClick={handleSaveUsername} disabled={!tempUsername.trim()}>
               تأكيد
@@ -199,16 +234,35 @@ export default function Chat() {
     );
   }
 
+  // نص typing indicator
+  const typingText =
+    typingUsers.length === 0
+      ? null
+      : typingUsers.length === 1
+      ? `${typingUsers[0]} يكتب...`
+      : typingUsers.length === 2
+      ? `${typingUsers[0]} و ${typingUsers[1]} يكتبان...`
+      : `${typingUsers.slice(0, 2).join(" و ")} وآخرون يكتبون...`;
+
   return (
     <div
       style={{ height: "100dvh" }}
       className="flex flex-col bg-background text-foreground overflow-hidden"
     >
       {/* Header */}
-      <header className="flex items-center justify-between px-4 py-3 border-b border-border/50 bg-card/50 backdrop-blur-sm shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
-          <h1 className="text-lg font-bold text-primary truncate">Chat</h1>
-          <div className="flex items-center gap-1.5 text-xs shrink-0">
+      <header className="flex items-center justify-between px-3 py-2.5 border-b border-border/50 bg-card/50 backdrop-blur-sm shrink-0 gap-2">
+        {/* Left: title + encrypted badge + status */}
+        <div className="flex items-center gap-2 min-w-0">
+          <h1 className="text-base font-bold text-primary shrink-0">Chat</h1>
+
+          <div className="flex items-center gap-1 bg-primary/10 border border-primary/20 rounded-full px-2 py-0.5 shrink-0">
+            <ShieldCheck className="w-3 h-3 text-primary" />
+            <span className="text-[10px] text-primary font-medium whitespace-nowrap">
+              Totally Encrypted
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
             <span className="relative flex h-2 w-2">
               {isConnected && (
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
@@ -219,43 +273,51 @@ export default function Chat() {
                 }`}
               />
             </span>
-            <span className={isConnected ? "text-primary" : "text-muted-foreground"}>
+            <span
+              className={`text-[10px] hidden sm:inline ${
+                isConnected ? "text-primary" : "text-muted-foreground"
+              }`}
+            >
               {isConnected ? "متصل" : "غير متصل"}
             </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Right: API Keys + username + logout */}
+        <div className="flex items-center gap-1.5 shrink-0">
           <Link
             href="/apikeys"
-            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-primary transition-colors"
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors px-2 py-1 rounded-md hover:bg-secondary/50"
           >
-            <KeyRound className="w-4 h-4" />
-            <span className="hidden sm:inline text-xs">API Keys</span>
+            <KeyRound className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">API Keys</span>
           </Link>
-          <div className="h-4 w-px bg-border" />
-          <span className="text-xs font-medium text-primary/70 max-w-[80px] truncate">
+          <div className="h-3.5 w-px bg-border" />
+          <span className="text-xs font-medium text-primary/70 max-w-[60px] truncate">
             {username}
           </span>
           <Button
             variant="ghost"
             size="icon"
             onClick={handleLogout}
-            className="h-8 w-8 text-muted-foreground hover:text-destructive"
+            className="h-7 w-7 text-muted-foreground hover:text-destructive"
           >
-            <LogOut className="w-4 h-4" />
+            <LogOut className="w-3.5 h-3.5" />
           </Button>
         </div>
       </header>
 
       {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 space-y-4">
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 space-y-3"
+      >
         {isLoading ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="w-7 h-7 text-primary animate-spin" />
           </div>
         ) : messages.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+          <div className="flex items-center justify-center h-full text-muted-foreground text-sm text-center px-4">
             لا توجد رسائل بعد. ابدأ المحادثة!
           </div>
         ) : (
@@ -265,7 +327,9 @@ export default function Chat() {
             const showHeader =
               i === 0 ||
               prev.username !== msg.username ||
-              new Date(msg.createdAt).getTime() - new Date(prev.createdAt).getTime() > 60000;
+              new Date(msg.createdAt).getTime() -
+                new Date(prev.createdAt).getTime() >
+                60000;
 
             return (
               <div
@@ -274,7 +338,7 @@ export default function Chat() {
               >
                 {showHeader && (
                   <div
-                    className={`flex items-baseline gap-2 mb-1 ${
+                    className={`flex items-baseline gap-1.5 mb-1 ${
                       isMe ? "flex-row-reverse" : "flex-row"
                     }`}
                   >
@@ -286,13 +350,13 @@ export default function Chat() {
                     </span>
                   </div>
                 )}
-
                 <div
                   className={`px-3 py-2 rounded-2xl break-words ${
                     isMe
-                      ? "bg-primary text-primary-foreground rounded-tr-sm max-w-[75vw] sm:max-w-sm"
-                      : "bg-secondary text-secondary-foreground rounded-tl-sm border border-secondary-border max-w-[75vw] sm:max-w-sm"
+                      ? "bg-primary text-primary-foreground rounded-tr-sm"
+                      : "bg-secondary text-secondary-foreground rounded-tl-sm border border-border"
                   }`}
+                  style={{ maxWidth: "min(75vw, 340px)" }}
                 >
                   {msg.type === "image" && msg.imageUrl ? (
                     <img
@@ -303,7 +367,7 @@ export default function Chat() {
                       loading="lazy"
                     />
                   ) : (
-                    <p className="leading-relaxed whitespace-pre-wrap text-sm sm:text-base">
+                    <p className="leading-relaxed whitespace-pre-wrap text-sm">
                       {msg.content}
                     </p>
                   )}
@@ -314,11 +378,25 @@ export default function Chat() {
         )}
       </div>
 
-      {/* Input bar */}
-      <div className="px-3 py-3 bg-card/80 backdrop-blur-md border-t border-border shrink-0">
+      {/* Input area */}
+      <div className="bg-card/80 backdrop-blur-md border-t border-border shrink-0">
+        {/* Typing indicator */}
+        <div className="px-4 pt-2 h-5 flex items-center">
+          {typingText && (
+            <span className="text-xs text-muted-foreground italic flex items-center gap-1.5">
+              <span className="flex gap-0.5">
+                <span className="inline-block w-1 h-1 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                <span className="inline-block w-1 h-1 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                <span className="inline-block w-1 h-1 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+              </span>
+              {typingText}
+            </span>
+          )}
+        </div>
+
         <form
           onSubmit={handleSendMessage}
-          className="flex items-center gap-2"
+          className="flex items-center gap-2 px-3 py-2"
         >
           <Popover>
             <PopoverTrigger asChild>
@@ -326,7 +404,7 @@ export default function Chat() {
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="shrink-0 h-10 w-10 rounded-full hover:bg-secondary text-muted-foreground"
+                className="shrink-0 h-9 w-9 rounded-full hover:bg-secondary text-muted-foreground"
               >
                 <Smile className="w-5 h-5" />
               </Button>
@@ -362,7 +440,7 @@ export default function Chat() {
             type="button"
             variant="ghost"
             size="icon"
-            className="shrink-0 h-10 w-10 rounded-full hover:bg-secondary text-muted-foreground"
+            className="shrink-0 h-9 w-9 rounded-full hover:bg-secondary text-muted-foreground"
             onClick={() => fileInputRef.current?.click()}
           >
             <ImageIcon className="w-5 h-5" />
@@ -370,7 +448,7 @@ export default function Chat() {
 
           <Input
             value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
+            onChange={handleInputChange}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -378,13 +456,13 @@ export default function Chat() {
               }
             }}
             placeholder="اكتب رسالة..."
-            className="flex-1 h-10 rounded-full bg-secondary/50 border-secondary focus-visible:ring-primary px-4 text-sm"
+            className="flex-1 h-9 rounded-full bg-secondary/50 border-secondary focus-visible:ring-primary px-4 text-sm"
           />
 
           <Button
             type="submit"
             size="icon"
-            className="shrink-0 h-10 w-10 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground transition-all active:scale-95"
+            className="shrink-0 h-9 w-9 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground transition-all active:scale-95"
             disabled={!inputValue.trim() || sendMessageMutation.isPending}
           >
             {sendMessageMutation.isPending ? (
@@ -394,6 +472,11 @@ export default function Chat() {
             )}
           </Button>
         </form>
+
+        {/* Footer */}
+        <p className="text-center text-[10px] text-muted-foreground/50 pb-2 px-2">
+          Made by Abdelwahab &nbsp;•&nbsp; Copyrights Reserved
+        </p>
       </div>
     </div>
   );

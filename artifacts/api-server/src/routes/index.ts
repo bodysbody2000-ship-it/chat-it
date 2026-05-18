@@ -4,6 +4,7 @@ import authRouter from "./auth";
 import messagesRouter from "./messages";
 import apikeysRouter from "./apikeys";
 import uploadRouter from "./upload";
+import typingRouter from "./typing";
 
 const router: IRouter = Router();
 
@@ -12,5 +13,6 @@ router.use(authRouter);
 router.use(messagesRouter);
 router.use(apikeysRouter);
 router.use(uploadRouter);
+router.use(typingRouter);
 
 export default router;
