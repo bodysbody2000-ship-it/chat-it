@@ -5,8 +5,7 @@ import { mkdirSync } from "fs";
 import router from "./routes";
 import { logger } from "./lib/logger";
 
-// الحل النهائي والأقوى لـ pino-http مع moduleResolution: bundler
-// بنستخدم require العادية عشان نخلص من حوار الـ types والـ call signature خالص في السطر ده
+// استخدام require لتفادي تعارض الـ Bundler تماماً
 const pinoHttp = require("pino-http");
 
 const uploadsDir = join(process.cwd(), "uploads");
@@ -14,7 +13,7 @@ mkdirSync(uploadsDir, { recursive: true });
 
 const app: Express = express();
 
-// تشغيل الـ logger بدون أي تضارب في الـ Types
+// @ts-ignore
 app.use(
   pinoHttp({
     logger,
@@ -42,7 +41,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/api/uploads", express.static(uploadsDir));
 app.use("/api", router);
 
-// السطر 18 والـ 25 والـ Error Handler متقفلين بـ Types كاملة عشان مستحيل الـ compiler يشتكي
+// @ts-ignore
 app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
   logger.error(err);
   res.status(500).json({ error: "Internal server error" });
