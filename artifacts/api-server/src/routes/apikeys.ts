@@ -37,7 +37,7 @@ router.post("/apikeys", authMiddleware, async (req, res): Promise<void> => {
     .values({ key, name: parsed.data.name })
     .returning();
 
-  req.log.info({ name: parsed.data.name }, "API key created");
+  logger.info({ name: parsed.data.name }, "API key created");
 
   res.status(201).json({
     id: row.id,
