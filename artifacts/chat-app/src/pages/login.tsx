@@ -30,33 +30,37 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-sm">
+    <div
+      style={{ minHeight: "100dvh" }}
+      className="bg-background flex flex-col items-center justify-center p-4"
+    >
+      <div className="w-full max-w-xs">
         <div className="flex flex-col items-center mb-8">
           <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mb-4">
             <Lock className="w-8 h-8 text-primary" />
           </div>
-          <h1 className="text-2xl font-bold text-foreground">Secure Comm</h1>
-          <p className="text-muted-foreground text-sm mt-1">Enter passphrase to access</p>
+          <h1 className="text-2xl font-bold text-foreground">Chat</h1>
+          <p className="text-muted-foreground text-sm mt-1">ادخل كلمة السر للدخول</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <Input
             type="password"
-            placeholder="Passphrase (4444)"
+            placeholder="كلمة السر"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
             className="h-12 bg-secondary/50 border-secondary/50 focus:border-primary text-center text-lg"
           />
-          <Button 
-            type="submit" 
+          <Button
+            type="submit"
             className="w-full h-12 text-lg font-medium"
             disabled={loginMutation.isPending || !password}
           >
-            {loginMutation.isPending ? "Decrypting..." : "Access"}
+            {loginMutation.isPending ? "جاري الدخول..." : "دخول"}
           </Button>
           {loginMutation.isError && (
-            <p className="text-destructive text-sm text-center">Access denied</p>
+            <p className="text-destructive text-sm text-center">كلمة السر غلط</p>
           )}
         </form>
       </div>
