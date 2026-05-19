@@ -3,7 +3,8 @@
   "installCommand": "pnpm install",
   "buildCommand": "pnpm -w run typecheck:libs && pnpm --filter @workspace/chat-app run build",
   "outputDirectory": "artifacts/chat-app/dist",
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" }
+  "routes": [
+    { "src": "/assets/(.*)", "dest": "/assets/$1" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
