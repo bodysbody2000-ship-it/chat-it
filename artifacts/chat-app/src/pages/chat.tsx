@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useLocation, Link } from "wouter";
 import { useSendMessage } from "@workspace/api-client-react";
-import type { Message } from "@workspace/api-client-react/src/generated/api.schemas";
+import type { Message } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";

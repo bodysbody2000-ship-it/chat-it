@@ -19,7 +19,7 @@ export default function ApiKeys() {
 
   const queryClient = useQueryClient();
 
-  const { data: apiKeys = [], isLoading } = useListApiKeys(undefined, {
+  const { data: apiKeys = [], isLoading } = useListApiKeys({
     query: { queryKey: getListApiKeysQueryKey() },
   });
 
