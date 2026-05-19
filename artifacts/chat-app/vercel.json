@@ -1,0 +1,7 @@
+{
+  "version": 2,
+  "buildCommand": "cd ../.. && pnpm run typecheck:libs && pnpm --filter @workspace/chat-app run build",
+  "installCommand": "cd ../.. && pnpm install",
+  "outputDirectory": "dist",
+  "framework": null
+}
