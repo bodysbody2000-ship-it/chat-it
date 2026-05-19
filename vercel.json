@@ -1,7 +1,7 @@
 {
   "version": 2,
   "installCommand": "pnpm install",
-  "buildCommand": "pnpm run typecheck:libs && pnpm --filter @workspace/chat-app run build && pnpm --filter @workspace/api-server run build",
+  "buildCommand": "pnpm -w run typecheck:libs && pnpm --filter @workspace/chat-app run build",
   "outputDirectory": "artifacts/chat-app/dist",
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" }
