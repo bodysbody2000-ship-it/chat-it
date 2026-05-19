@@ -1,7 +1,12 @@
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build as esbuild } from "esbuild";
+import esbuildPluginPino from "esbuild-plugin-pino";
 import { rm } from "node:fs/promises";
+
+// esbuild-plugin-pino uses require() internally
+globalThis.require = createRequire(import.meta.url);
 
 const artifactDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -32,6 +37,7 @@ async function buildAll() {
       "utf-8-validate",
     ],
     sourcemap: "linked",
+    plugins: [esbuildPluginPino({ transports: ["pino-pretty"] })],
     banner: {
       js: `import { createRequire as __bannerCrReq } from 'node:module';
 import __bannerPath from 'node:path';
