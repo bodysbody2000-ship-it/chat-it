@@ -7,6 +7,7 @@ import { Lock } from "lucide-react";
 
 export default function Login() {
   const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
   const [, setLocation] = useLocation();
   const loginMutation = useLogin();
 
@@ -18,11 +19,13 @@ export default function Login() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!name.trim() || !password) return;
     loginMutation.mutate(
       { data: { password } },
       {
         onSuccess: (data) => {
           localStorage.setItem("chat_token", data.token);
+          localStorage.setItem("chat_username", name.trim());
           setLocation("/chat");
         },
       }
@@ -43,7 +46,16 @@ export default function Login() {
           <p className="text-muted-foreground text-sm mt-1">ادخل كلمة السر للدخول</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <Input
+            type="text"
+            placeholder="اسمك"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoComplete="nickname"
+            className="h-12 bg-secondary/50 border-secondary/50 focus:border-primary text-center text-lg"
+            dir="rtl"
+          />
           <Input
             type="password"
             placeholder="كلمة السر"
@@ -55,12 +67,12 @@ export default function Login() {
           <Button
             type="submit"
             className="w-full h-12 text-lg font-medium"
-            disabled={loginMutation.isPending || !password}
+            disabled={loginMutation.isPending || !password || !name.trim()}
           >
             {loginMutation.isPending ? "جاري الدخول..." : "دخول"}
           </Button>
           {loginMutation.isError && (
-            <p className="text-destructive text-sm text-center">كلمة السر غلط</p>
+            <p className="text-destructive text-sm text-center">كلمة السر غلط — الكلمة الصح: 4444</p>
           )}
         </form>
       </div>
